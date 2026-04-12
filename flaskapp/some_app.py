@@ -13,6 +13,14 @@ from io import BytesIO
 import json
 import lxml.etree as ET
 
+import numpy as np
+import matplotlib
+# чтобы не открывались окна
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from wtforms import SelectField, FloatField
+from wtforms.validators import NumberRange
+
 app = Flask(__name__)
 
 # Конфигурация приложения
@@ -24,6 +32,38 @@ app.config['RECAPTCHA_OPTIONS'] = {'theme': 'white'}
 
 bootstrap = Bootstrap(app)
 
+def apply_modulation(img_array, func_type, period):
+    h, w = img_array.shape[:2]
+    y, x = np.ogrid[:h, :w]
+    freq = 2 * np.pi / period
+    arg = (x + y) * freq
+    pattern = np.sin(arg) if func_type == 'sin' else np.cos(arg)
+    pattern_norm = (pattern + 1) / 2.0
+    if len(img_array.shape) == 3:
+        pattern_norm = pattern_norm[:, :, np.newaxis]
+    processed = img_array * pattern_norm
+    processed = np.clip(processed * 255, 0, 255).astype(np.uint8)
+    return processed
+
+def plot_histogram(img_array, title):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    if len(img_array.shape) == 3:
+        colors = ('red', 'green', 'blue')
+        for i, color in enumerate(colors):
+            ax.hist(img_array[:, :, i].ravel(), bins=256, range=(0, 1),
+                    alpha=0.5, color=color, label=color.upper())
+        ax.legend()
+    else:
+        ax.hist(img_array.ravel(), bins=256, range=(0, 1), color='gray')
+    ax.set_xlim(0, 1)
+    ax.set_title(title)
+    ax.set_xlabel('Интенсивность')
+    ax.set_ylabel('Частота')
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
 
 class NetForm(FlaskForm):
     openid = StringField('openid', validators=[DataRequired()])
@@ -37,6 +77,17 @@ class NetForm(FlaskForm):
     # recaptcha = RecaptchaField()
     submit = SubmitField('send')
 
+class ModulationForm(FlaskForm):
+    upload = FileField('Load image', validators=[
+        FileRequired(),
+        FileAllowed(['jpg', 'png', 'jpeg'], 'Images only!')
+    ])
+    func = SelectField('Function', choices=[('sin', 'sin'), ('cos', 'cos')],
+                       validators=[DataRequired()])
+    period = FloatField('Period', validators=[DataRequired(), NumberRange(min=1.0, max=1000.0)],
+                        default=50.0)
+    recaptcha = RecaptchaField()
+    submit = SubmitField('Process')
 
 @app.route("/")
 def hello():
@@ -104,6 +155,47 @@ def apixml():
     newhtml = transform(dom)
     strfile = ET.tostring(newhtml)
     return strfile
+
+@app.route("/var19", methods=['GET', 'POST'])
+def var19():
+    form = ModulationForm()
+    original_filename = None
+    processed_filename = None
+    orig_hist = None
+    proc_hist = None
+
+    if form.validate_on_submit():
+        # Сохраняем исходный файл
+        file = form.upload.data
+        ext = os.path.splitext(file.filename)[1]
+        original_filename = secure_filename(f"orig_{np.random.randint(10000)}{ext}")
+        original_path = os.path.join('./static', original_filename)
+        file.save(original_path)
+
+        # Читаем и нормализуем
+        img = Image.open(original_path)
+        img_array = np.array(img).astype(np.float32) / 255.0
+
+        func_type = form.func.data
+        period = form.period.data
+
+        # Обработка
+        processed_array = apply_modulation(img_array, func_type, period)
+        processed_img = Image.fromarray(processed_array)
+        processed_filename = secure_filename(f"proc_{np.random.randint(10000)}{ext}")
+        processed_path = os.path.join('./static', processed_filename)
+        processed_img.save(processed_path)
+
+        # Гистограммы
+        orig_hist = plot_histogram(img_array, "Original Image")
+        proc_hist = plot_histogram(processed_array / 255.0, "Processed Image")
+
+    return render_template('var19.html',
+                           form=form,
+                           original=original_filename,
+                           processed=processed_filename,
+                           orig_hist=orig_hist,
+                           proc_hist=proc_hist)
 
 if __name__ == "__main__":
     app.run(host='127.0.0.1', port=5000)
