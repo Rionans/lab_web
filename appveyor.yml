@@ -2,7 +2,7 @@ image: Ubuntu
 
 install:
   - chmod +x ./flaskapp/st.sh
-  - pip3 install flask gunicorn requests
+  - pip3 install flask gunicorn requests flask-bootstrap flask-wtf pillow tensorflow keras
 
 build: off
 
