@@ -12,6 +12,8 @@ from PIL import Image
 from io import BytesIO
 import json
 import lxml.etree as ET
+from PIL import ImageDraw, ImageFont
+from wtforms import BooleanField
 
 import numpy as np
 import matplotlib
@@ -86,6 +88,7 @@ class ModulationForm(FlaskForm):
                        validators=[DataRequired()])
     period = FloatField('Period', validators=[DataRequired(), NumberRange(min=1.0, max=1000.0)],
                         default=50.0)
+    add_timestamp = BooleanField('Добавить метку времени')
     recaptcha = RecaptchaField()
     submit = SubmitField('Process')
 
@@ -181,6 +184,12 @@ def var19():
 
         # Обработка
         processed_array = apply_modulation(img_array, func_type, period)
+
+        if form.add_timestamp.data:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            processed_array = add_timestamp(processed_array, timestamp)
+
         processed_img = Image.fromarray(processed_array)
         processed_filename = secure_filename(f"proc_{np.random.randint(10000)}{ext}")
         processed_path = os.path.join('./static', processed_filename)
@@ -196,6 +205,16 @@ def var19():
                            processed=processed_filename,
                            orig_hist=orig_hist,
                            proc_hist=proc_hist)
+
+def add_timestamp(image_array, text):
+    img = Image.fromarray(image_array)
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+    except IOError:
+        font = ImageFont.load_default()
+    draw.text((10, 10), text, fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
+    return np.array(img)
 
 if __name__ == "__main__":
     app.run(host='127.0.0.1', port=5000)
